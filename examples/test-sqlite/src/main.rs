@@ -4,6 +4,8 @@ use sqlx::sqlite::{SqliteConnectOptions, SqliteJournalMode, SqlitePoolOptions};
 use gen_sqlx_type::gen_sqlx_type;
 
 gen_sqlx_type!(Task, file="queries/all_tasks.sql");
+gen_sqlx_type!(NoSerdeTask, file="queries/all_tasks.sql", serde=false);
+gen_sqlx_type!(NoCloneTask, file="queries/all_tasks.sql", clone=false);
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
@@ -14,7 +16,30 @@ async fn main() -> anyhow::Result<()> {
     let pool = SqlitePoolOptions::new().connect_with(options).await?;
     let all_tasks = sqlx::query_file_as!(Task, "queries/all_tasks.sql").fetch_all(&pool).await?;
     for task in all_tasks {
-        println!("Task: {:?}", task);
+        println!("Task: {:?}", task.clone());
+        let _json = serde_json::to_string(&task)?;
     }
+
+    let _no_serde = NoSerdeTask {
+        id: 1,
+        title: "test".to_string(),
+        description: None,
+        status: "pending".to_string(),
+        created_at: None,
+        updated_at: None,
+    };
+    // The following would fail to compile if I uncommented them:
+    // let _json = serde_json::to_string(&_no_serde)?; 
+
+    let _no_clone = NoCloneTask {
+        id: 1,
+        title: "test".to_string(),
+        description: None,
+        status: "pending".to_string(),
+        created_at: None,
+        updated_at: None,
+    };
+    // let _cloned = _no_clone.clone(); // This should fail if clone=false works
+
     Ok(())
 }

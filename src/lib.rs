@@ -1,6 +1,6 @@
 use proc_macro::TokenStream;
 use quote::quote;
-use syn::{parse_macro_input, Ident, LitStr, Token};
+use syn::{parse_macro_input, Ident, LitStr, Token, LitBool};
 use syn::parse::{Parse, ParseStream};
 use std::env;
 use std::path::PathBuf;
@@ -15,6 +15,8 @@ use common::{hash_string, resolve_path};
 struct MacroInput {
     struct_name: Ident,
     sql: String,
+    serde: bool,
+    clone: bool,
 }
 
 impl Parse for MacroInput {
@@ -23,21 +25,31 @@ impl Parse for MacroInput {
         input.parse::<Token![,]>()?;
 
         let mut sql = None;
+        let mut serde = true;
+        let mut clone = true;
 
         while !input.is_empty() {
             let lookahead = input.lookahead1();
             if lookahead.peek(Ident) {
                 let key: Ident = input.parse()?;
                 input.parse::<Token![=]>()?;
-                let value: LitStr = input.parse()?;
+                
                 if key == "source" {
+                    let value: LitStr = input.parse()?;
                     sql = Some(value.value());
                 } else if key == "file" {
+                    let value: LitStr = input.parse()?;
                     let path = resolve_path(value.value(), value.span())?;
                     let content = fs::read_to_string(&path).map_err(|e| {
                         syn::Error::new(value.span(), format!("Failed to read query file: {}", e))
                     })?;
                     sql = Some(content);
+                } else if key == "serde" {
+                    let value: LitBool = input.parse()?;
+                    serde = value.value;
+                } else if key == "clone" {
+                    let value: LitBool = input.parse()?;
+                    clone = value.value;
                 } else {
                     return Err(syn::Error::new(key.span(), format!("Unexpected key: {}", key)));
                 }
@@ -59,6 +71,8 @@ impl Parse for MacroInput {
         Ok(MacroInput {
             struct_name,
             sql,
+            serde,
+            clone,
         })
     }
 }
@@ -69,6 +83,8 @@ pub fn gen_sqlx_type(input: TokenStream) -> TokenStream {
     let input = parse_macro_input!(input as MacroInput);
     let struct_name = input.struct_name;
     let sql = input.sql;
+    let derive_serde = input.serde;
+    let derive_clone = input.clone;
 
     let offline = env::var("SQLX_OFFLINE")
         .map(|s| s.eq_ignore_ascii_case("true") || s == "1")
@@ -90,8 +106,17 @@ pub fn gen_sqlx_type(input: TokenStream) -> TokenStream {
         }
     };
 
+    let mut derives = vec![quote!(Debug), quote!(sqlx::FromRow)];
+    if derive_serde {
+        derives.push(quote!(serde::Serialize));
+        derives.push(quote!(serde::Deserialize));
+    }
+    if derive_clone {
+        derives.push(quote!(Clone));
+    }
+
     let expanded = quote! {
-        #[derive(Debug, sqlx::FromRow)]
+        #[derive(#(#derives),*)]
         pub struct #struct_name {
             #(#fields),*
         }

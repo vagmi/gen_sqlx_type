@@ -10,7 +10,8 @@ async fn main() -> anyhow::Result<()> {
     let pool = PgPoolOptions::new().connect(&db_url).await?;
     let all_tasks = sqlx::query_file_as!(Task, "queries/all_tasks.sql").fetch_all(&pool).await?;
     for task in all_tasks {
-        println!("Task: {:?}", task);
+        let task_json = serde_json::to_string(&task.clone())?;
+        println!("{}", task_json);
     }
     Ok(())
 }

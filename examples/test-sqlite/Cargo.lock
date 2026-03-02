@@ -124,6 +124,7 @@ dependencies = [
  "iana-time-zone",
  "js-sys",
  "num-traits",
+ "serde",
  "wasm-bindgen",
  "windows-link",
 ]
@@ -1401,6 +1402,8 @@ dependencies = [
  "anyhow",
  "chrono",
  "gen_sqlx_type",
+ "serde",
+ "serde_json",
  "sqlx",
  "tokio",
 ]
