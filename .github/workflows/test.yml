@@ -1,0 +1,110 @@
+name: Test Postgres and SQLite
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  check-lib:
+    name: Library Check
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+      - name: Rust Cache
+        uses: Swatinem/rust-cache@v2
+      - name: Check Library (No Features)
+        run: cargo check
+      - name: Check Library (SQLite)
+        run: cargo check --features sqlite
+      - name: Check Library (Postgres)
+        run: cargo check --features postgres
+
+  test-sqlite:
+    needs: check-lib
+    name: SQLite Test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Rust Cache
+        uses: Swatinem/rust-cache@v2
+
+      - name: Install sqlx-cli
+        run: cargo install sqlx-cli --no-default-features --features sqlite
+
+      - name: Online Test (Live DB)
+        run: |
+          cd examples/test-sqlite
+          export DATABASE_URL=sqlite:test.db
+          sqlx db create
+          sqlx migrate run
+          cargo run
+        env:
+          DATABASE_URL: sqlite:test.db
+
+      - name: Offline Test (Cached Metadata)
+        run: |
+          cd examples/test-sqlite
+          cargo clean
+          export SQLX_OFFLINE=true
+          cargo build
+        env:
+          SQLX_OFFLINE: "true"
+
+  test-postgresql:
+    needs: check-lib
+    name: PostgreSQL Test
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:18
+        env:
+          POSTGRES_PASSWORD: password
+          POSTGRES_DB: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Rust Cache
+        uses: Swatinem/rust-cache@v2
+
+      - name: Install sqlx-cli
+        run: cargo install sqlx-cli --no-default-features --features postgres
+
+      - name: Online Test (Live DB)
+        run: |
+          cd examples/test-postgresql
+          export DATABASE_URL=postgres://postgres:password@localhost:5432/postgres
+          sqlx db create
+          sqlx migrate run
+          cargo run
+        env:
+          DATABASE_URL: postgres://postgres:password@localhost:5432/postgres
+
+      - name: Offline Test (Cached Metadata)
+        run: |
+          cd examples/test-postgresql
+          cargo clean
+          export SQLX_OFFLINE=true
+          cargo build
+        env:
+          SQLX_OFFLINE: "true"
