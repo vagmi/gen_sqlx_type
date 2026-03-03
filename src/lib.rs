@@ -9,7 +9,7 @@ use std::fs;
 
 mod common;
 mod drivers;
-use drivers::DRIVERS;
+use drivers::{DRIVERS, QueryInfo};
 use common::{hash_string, resolve_path};
 
 struct MacroInput {
@@ -82,6 +82,7 @@ impl Parse for MacroInput {
 pub fn gen_sqlx_type(input: TokenStream) -> TokenStream {
     let input = parse_macro_input!(input as MacroInput);
     let struct_name = input.struct_name;
+    let params_struct_name = quote::format_ident!("{}Params", struct_name);
     let sql = input.sql;
     let derive_serde = input.serde;
     let derive_clone = input.clone;
@@ -91,14 +92,14 @@ pub fn gen_sqlx_type(input: TokenStream) -> TokenStream {
         .unwrap_or(false);
     
     let database_url = env::var("DATABASE_URL").ok();
-    let fields_res = if offline || database_url.is_none() {
+    let res = if offline || database_url.is_none() {
         get_fields_offline(&sql)
     } else {
         get_fields_online(&sql)
     };
 
-    let fields = match fields_res {
-        Ok(f) => f,
+    let (query_info, db_type) = match res {
+        Ok(r) => r,
         Err(e) => {
             return TokenStream::from(quote! {
                 compile_error!(#e);
@@ -106,7 +107,11 @@ pub fn gen_sqlx_type(input: TokenStream) -> TokenStream {
         }
     };
 
-    let mut derives = vec![quote!(Debug), quote!(sqlx::FromRow)];
+    let fields = query_info.fields;
+    let params = query_info.params;
+    let param_names = (1..=params.len()).map(|i| quote::format_ident!("p{}", i)).collect::<Vec<_>>();
+
+    let mut derives: Vec<proc_macro2::TokenStream> = vec![quote!(Debug), quote!(sqlx::FromRow)];
     if derive_serde {
         derives.push(quote!(serde::Serialize));
         derives.push(quote!(serde::Deserialize));
@@ -120,12 +125,37 @@ pub fn gen_sqlx_type(input: TokenStream) -> TokenStream {
         pub struct #struct_name {
             #(#fields),*
         }
+
+        #[derive(#(#derives),*)]
+        pub struct #params_struct_name {
+            #(#params),*
+        }
+
+        impl #struct_name {
+            pub async fn fetch_all<'a, E>(ex: E, params: #params_struct_name) -> Result<Vec<Self>, ::sqlx::Error>
+            where E: 'a + ::sqlx::Executor<'a, Database = #db_type>
+            {
+                ::sqlx::query_as!(Self, #sql, #(params.#param_names),*).fetch_all(ex).await
+            }
+
+            pub async fn fetch_one<'a, E>(ex: E, params: #params_struct_name) -> Result<Self, ::sqlx::Error>
+            where E: 'a + ::sqlx::Executor<'a, Database = #db_type>
+            {
+                ::sqlx::query_as!(Self, #sql, #(params.#param_names),*).fetch_one(ex).await
+            }
+
+            pub async fn fetch_optional<'a, E>(ex: E, params: #params_struct_name) -> Result<Option<Self>, ::sqlx::Error>
+            where E: 'a + ::sqlx::Executor<'a, Database = #db_type>
+            {
+                ::sqlx::query_as!(Self, #sql, #(params.#param_names),*).fetch_optional(ex).await
+            }
+        }
     };
 
     TokenStream::from(expanded)
 }
 
-fn get_fields_online(sql: &str) -> Result<Vec<proc_macro2::TokenStream>, String> {
+fn get_fields_online(sql: &str) -> Result<(QueryInfo, proc_macro2::TokenStream), String> {
     let database_url = env::var("DATABASE_URL").map_err(|_| "DATABASE_URL must be set")?;
     let database_url_parsed = Url::parse(&database_url).map_err(|e| format!("Failed to parse DATABASE_URL: {}", e))?;
     let scheme = database_url_parsed.scheme();
@@ -133,11 +163,13 @@ fn get_fields_online(sql: &str) -> Result<Vec<proc_macro2::TokenStream>, String>
     let driver = DRIVERS.iter().find(|d| d.url_schemes().contains(&scheme))
         .ok_or_else(|| format!("No driver found for scheme: {}", scheme))?;
 
-    driver.describe_query(&database_url, sql)
-        .map_err(|e| format!("Failed to describe query using {} driver: {}", driver.name(), e))
+    let info = driver.describe_query(&database_url, sql)
+        .map_err(|e| format!("Failed to describe query using {} driver: {}", driver.name(), e))?;
+
+    Ok((info, driver.database_type()))
 }
 
-fn get_fields_offline(sql: &str) -> Result<Vec<proc_macro2::TokenStream>, String> {
+fn get_fields_offline(sql: &str) -> Result<(QueryInfo, proc_macro2::TokenStream), String> {
     let hash = hash_string(sql);
     let filename = format!("query-{}.json", hash);
 
@@ -161,7 +193,8 @@ fn get_fields_offline(sql: &str) -> Result<Vec<proc_macro2::TokenStream>, String
             let driver = DRIVERS.iter().find(|d| d.name() == db_name)
                 .ok_or_else(|| format!("No driver found for database: {}", db_name))?;
 
-            return driver.describe_query_offline(describe);
+            let info = driver.describe_query_offline(describe)?;
+            return Ok((info, driver.database_type()));
         }
     }
 

@@ -1,8 +1,8 @@
-use super::Driver;
+use super::{Driver, QueryInfo};
 use crate::common::block_on;
 use proc_macro2::TokenStream;
 use quote::{format_ident, quote};
-use sqlx::{Column, Connection, Executor, TypeInfo};
+use sqlx::{Column, Connection, Executor, TypeInfo, Either};
 use sqlx::postgres::{PgTypeInfo, PgTypeKind, Postgres};
 use sqlx_core::describe::Describe;
 
@@ -13,6 +13,10 @@ impl Driver for PostgresDriver {
         "PostgreSQL"
     }
 
+    fn database_type(&self) -> TokenStream {
+        quote!(::sqlx::Postgres)
+    }
+
     fn url_schemes(&self) -> &'static [&'static str] {
         &["postgres", "postgresql"]
     }
@@ -21,7 +25,7 @@ impl Driver for PostgresDriver {
         &self,
         database_url: &str,
         sql: &str,
-    ) -> Result<Vec<TokenStream>, String> {
+    ) -> Result<QueryInfo, String> {
         block_on(async {
             let mut conn = sqlx::postgres::PgConnection::connect(database_url)
                 .await
@@ -30,18 +34,38 @@ impl Driver for PostgresDriver {
                 .await
                 .map_err(|e| e.to_string())?;
             
-            Ok(gen_fields(&describe))
+            Ok(QueryInfo {
+                fields: gen_fields(&describe),
+                params: gen_params(&describe),
+            })
         })
     }
 
     fn describe_query_offline(
         &self,
         describe_json: serde_json::Value,
-    ) -> Result<Vec<TokenStream>, String> {
+    ) -> Result<QueryInfo, String> {
         let describe: Describe<Postgres> = serde_json::from_value(describe_json)
             .map_err(|e| format!("Failed to deserialize Postgres describe: {}", e))?;
-        Ok(gen_fields(&describe))
+        Ok(QueryInfo {
+            fields: gen_fields(&describe),
+            params: gen_params(&describe),
+        })
     }
+}
+
+fn gen_params(describe: &Describe<Postgres>) -> Vec<TokenStream> {
+    let mut params = Vec::new();
+    if let Some(Either::Left(param_types)) = &describe.parameters() {
+        for (i, type_info) in param_types.iter().enumerate() {
+            let field_name = format_ident!("p{}", i + 1);
+            let type_tokens = map_pg_type(type_info);
+            params.push(quote! {
+                pub #field_name: #type_tokens
+            });
+        }
+    }
+    params
 }
 
 fn gen_fields(describe: &Describe<Postgres>) -> Vec<TokenStream> {

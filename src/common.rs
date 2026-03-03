@@ -1,9 +1,12 @@
+#[cfg(any(feature = "sqlite", feature = "postgres"))]
 use once_cell::sync::Lazy;
 use proc_macro2::Span;
 use std::env;
 use std::path::{Path, PathBuf};
+#[cfg(any(feature = "sqlite", feature = "postgres"))]
 use tokio::runtime::Runtime;
 
+#[cfg(any(feature = "sqlite", feature = "postgres"))]
 pub static TOKIO_RT: Lazy<Runtime> = Lazy::new(|| {
     tokio::runtime::Builder::new_current_thread()
         .enable_all()
@@ -11,6 +14,7 @@ pub static TOKIO_RT: Lazy<Runtime> = Lazy::new(|| {
         .expect("failed to start Tokio runtime")
 });
 
+#[cfg(any(feature = "sqlite", feature = "postgres"))]
 pub fn block_on<F>(f: F) -> F::Output
 where
     F: std::future::Future,

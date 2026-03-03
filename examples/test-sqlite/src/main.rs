@@ -14,7 +14,7 @@ async fn main() -> anyhow::Result<()> {
         .journal_mode(SqliteJournalMode::Wal)
         .create_if_missing(true);
     let pool = SqlitePoolOptions::new().connect_with(options).await?;
-    let all_tasks = sqlx::query_file_as!(Task, "queries/all_tasks.sql").fetch_all(&pool).await?;
+    let all_tasks = Task::fetch_all(&pool, TaskParams {}).await?;
     for task in all_tasks {
         println!("Task: {:?}", task.clone());
         let _json = serde_json::to_string(&task)?;
