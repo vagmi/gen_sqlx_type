@@ -18,7 +18,7 @@ SQLx's `query!` and `query_file!` macros are excellent for compile-time safety, 
 use gen_sqlx_type::gen_sqlx_type;
 
 // 1. Generate from an inline string
-gen_sqlx_type!(User, source = "SELECT id, name, email FROM users");
+gen_sqlx_type!(User, source = "SELECT id, name, email FROM users WHERE id = $1");
 
 // 2. Generate from a .sql file (relative to cargo root)
 gen_sqlx_type!(ComplexReport, file = "queries/report.sql");
@@ -26,7 +26,15 @@ gen_sqlx_type!(ComplexReport, file = "queries/report.sql");
 // 3. Customize derives (Debug, sqlx::FromRow, Serialize, Deserialize, Clone are default)
 gen_sqlx_type!(InternalTask, source = "SELECT * FROM tasks", serde = false, clone = false);
 
-// 4. Use with sqlx macros
+// 4. Use with generated fetch methods
+async fn get_user(pool: &sqlx::PgPool, id: i32) -> anyhow::Result<User> {
+    // A UserParams struct is automatically generated for your query parameters
+    let params = UserParams { p1: id };
+    let user = User::fetch_one(pool, params).await?;
+    Ok(user)
+}
+
+// 5. Still compatible with standard sqlx macros
 async fn get_users(pool: &sqlx::PgPool) -> anyhow::Result<Vec<User>> {
     let users = sqlx::query_as!(User, "SELECT id, name, email FROM users")
         .fetch_all(pool)
@@ -37,13 +45,15 @@ async fn get_users(pool: &sqlx::PgPool) -> anyhow::Result<Vec<User>> {
 
 ## Features
 
-- **Multi-Database Support:** Robust implementations for **PostgreSQL** and **SQLite**.
-- **Rich Type Mapping:** 
+- **Automatic Parameter Structs**: For every query struct `TypeName`, a corresponding `TypeNameParams` struct is generated with fields `p1`, `p2`, etc., matching your query parameters.
+- **Built-in Fetch Methods**: Generated structs include `fetch_one`, `fetch_all`, and `fetch_optional` methods that handle query execution and mapping automatically.
+- **Multi-Database Support**: Robust implementations for **PostgreSQL** and **SQLite**.
+- **Rich Type Mapping**: 
     - Automatic mapping for `JSON`/`JSONB` to `serde_json::Value` (Postgres).
     - Support for `UUID`, `Chrono` (DateTime, Date, Time), and `BigDecimal`.
     - Support for PostgreSQL recursive arrays (`Vec<T>`).
-- **Offline Mode:** Fully supports `SQLX_OFFLINE` and `SQLX_OFFLINE_DIR` using the same `.sqlx` metadata cache as SQLx.
-- **Configurable Derives:** Default derivation of `Serialize`, `Deserialize`, and `Clone` can be toggled via macro flags.
+- **Offline Mode**: Fully supports `SQLX_OFFLINE` and `SQLX_OFFLINE_DIR` using the same `.sqlx` metadata cache as SQLx.
+- **Configurable Derives**: Default derivation of `Serialize`, `Deserialize`, and `Clone` can be toggled via macro flags.
 
 ## Setup
 
